@@ -139,7 +139,7 @@ async function sendToSlack(hubspotLinks) {
     linksList = hubspotLinks.map((link, i) => `${i + 1}. ${link}`).join("\n");
   }
 
-  const message = `Hey <!subteam^S04S66530SX>, PM Pic of this week release. Please update all the hubspot ticket status to "Resolved". Here's the list of the hubspot ticket\n\n${linksList}`;
+  const message = `Hey <!subteam^S04S66530SX>, PM Pic of this week release. Please update all the hubspot ticket status to "Tech Status = Deployed" and move it back to "Re-engage Client/Support Team Clarification". Here's the list of the hubspot ticket\n\n${linksList}`;
 
   const res = await fetch(webhookUrl, {
     method: "POST",
