@@ -69,6 +69,30 @@ async function jiraFetch(path) {
   return res.json();
 }
 
+async function jiraPost(path, body) {
+  const email = process.env.JIRA_EMAIL;
+  const token = process.env.JIRA_API_TOKEN;
+  const auth = Buffer.from(`${email}:${token}`).toString("base64");
+
+  const res = await fetch(
+    `https://api.atlassian.com/ex/jira/${JIRA_CLOUD_ID}/rest/api/3${path}`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${auth}`,
+        Accept: "application/json",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(body)
+    }
+  );
+
+  if (!res.ok) {
+    throw new Error(`Jira API error ${res.status}: ${await res.text()}`);
+  }
+  return res.json();
+}
+
 async function findTodayRelease(today) {
   const versions = await jiraFetch("/project/B2/version?status=unreleased&orderBy=-sequence&maxResults=50");
   const versionList = versions.values || versions;
@@ -95,11 +119,11 @@ async function findTodayRelease(today) {
 }
 
 async function getIssuesForVersion(versionName) {
-  const jql = encodeURIComponent(
-    `project = B2 AND fixVersion = "${versionName}" AND issuetype in (Story, Task, Hotfix, "Off Cycle")`
-  );
-  const fields = "summary,description,issuetype";
-  const data = await jiraFetch(`/search?jql=${jql}&fields=${fields}&maxResults=100`);
+  const data = await jiraPost("/search/jql", {
+    jql: `project = B2 AND fixVersion = "${versionName}" AND issuetype in (Story, Task, Hotfix, "Off Cycle")`,
+    fields: ["summary", "description", "issuetype"],
+    maxResults: 100
+  });
   return data.issues || [];
 }
 
