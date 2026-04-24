@@ -24,12 +24,12 @@ export default async () => {
     const issues = await getIssuesForVersion(version.name);
     console.log(`[hubspot-tickets] Found ${issues.length} qualifying tickets`);
 
-    // Step 3: Extract HubSpot links from descriptions
-    const hubspotLinks = extractHubspotLinks(issues);
-    console.log(`[hubspot-tickets] Found ${hubspotLinks.length} HubSpot links`);
+    // Step 3: Extract HubSpot links with ticket titles from descriptions
+    const hubspotEntries = extractHubspotLinks(issues);
+    console.log(`[hubspot-tickets] Found ${hubspotEntries.length} HubSpot links`);
 
     // Step 4: Send to Slack
-    await sendToSlack(hubspotLinks);
+    await sendToSlack(hubspotEntries);
     console.log("[hubspot-tickets] Message sent to Slack");
 
     return new Response("OK", { status: 200 });
@@ -128,11 +128,13 @@ async function getIssuesForVersion(versionName) {
 }
 
 function extractHubspotLinks(issues) {
-  const links = new Set();
+  const seen = new Set();
+  const entries = [];
   const hubspotRegex = /https?:\/\/[^\s"<>\]|)]*hubspot\.com[^\s"<>\]|)]*/gi;
 
   for (const issue of issues) {
     const desc = issue.fields?.description;
+    const title = issue.fields?.summary || "";
     if (!desc) continue;
 
     // Description can be ADF (object) or rendered text
@@ -140,27 +142,29 @@ function extractHubspotLinks(issues) {
     const matches = text.match(hubspotRegex);
     if (matches) {
       for (const url of matches) {
-        // Clean trailing punctuation
         const clean = url.replace(/[,;.]+$/, "");
-        links.add(clean);
+        if (!seen.has(clean)) {
+          seen.add(clean);
+          entries.push({ title, url: clean });
+        }
       }
     }
   }
 
-  return [...links];
+  return entries;
 }
 
-async function sendToSlack(hubspotLinks) {
+async function sendToSlack(hubspotEntries) {
   const webhookUrl = process.env.SLACK_HUBSPOT_WEBHOOK_URL;
   if (!webhookUrl) {
     throw new Error("Missing SLACK_HUBSPOT_WEBHOOK_URL env var");
   }
 
   let linksList;
-  if (hubspotLinks.length === 0) {
+  if (hubspotEntries.length === 0) {
     linksList = "No HubSpot tickets found in this release.";
   } else {
-    linksList = hubspotLinks.map((link, i) => `${i + 1}. ${link}`).join("\n");
+    linksList = hubspotEntries.map((entry, i) => `${i + 1}. ${entry.title}\n    ${entry.url}`).join("\n");
   }
 
   const message = `Hey <!subteam^S04S66530SX>, PM Pic of this week release. Please update all the hubspot ticket status to "Tech Status = Deployed" and move it back to "Re-engage Client/Support Team Clarification". Here's the list of the hubspot ticket\n\n${linksList}`;
