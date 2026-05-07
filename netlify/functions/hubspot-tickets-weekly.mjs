@@ -130,7 +130,7 @@ async function getIssuesForVersion(versionName) {
 function extractHubspotLinks(issues) {
   const seen = new Set();
   const entries = [];
-  const hubspotRegex = /https?:\/\/[^\s"<>\]|)]*hubspot\.com[^\s"<>\]|)]*/gi;
+  const hubspotRegex = /https?:\/\/app\.hubspot\.com\/contacts\/[^\s"<>\]|)]*/gi;
 
   for (const issue of issues) {
     const desc = issue.fields?.description;
