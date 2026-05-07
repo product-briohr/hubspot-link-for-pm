@@ -2,7 +2,7 @@
 // Pulls Jira B2 release for this week, extracts HubSpot links, posts to Slack #professional-overthinkers
 
 export const config = {
-  schedule: "0 7 * * 4" // 3PM MYT (UTC+8) every Thursday
+  schedule: "0 6 * * 4" // 2PM MYT (UTC+8) every Thursday
 };
 
 const JIRA_CLOUD_ID = "e38dd556-d5ba-4444-8e93-93420ba8123c";
