@@ -1,36 +1,49 @@
-// Scheduled function: Every Thursday 3pm MYT (7am UTC)
-// Pulls Jira B2 release for this week, extracts HubSpot links, posts to Slack #professional-overthinkers
+// Scheduled function: Every Friday 10AM MYT (02:00 UTC)
+// Pulls Jira B2 release from Thursday, extracts HubSpot links, posts to Slack
+
+import { getStore } from "@netlify/blobs";
 
 export const config = {
-  schedule: "0 6 * * 4" // 2PM MYT (UTC+8) every Thursday
+  schedule: "0 2 * * 5" // Friday 10AM MYT (UTC+8 = 02:00 UTC)
 };
 
 const JIRA_CLOUD_ID = "e38dd556-d5ba-4444-8e93-93420ba8123c";
 
 export default async () => {
   try {
-    const today = getTodayMYT(); // YYYY-MM-DD in MYT timezone
-    console.log(`[hubspot-tickets] Running for date: ${today}`);
+    const releaseDate = getThursdayMYT(); // Releases are dated Thursday; we run Friday morning
+    console.log(`[hubspot-tickets] Looking for release on: ${releaseDate}`);
 
-    // Step 1: Find the release version with today's date
-    const version = await findTodayRelease(today);
+    // Step 1: Find Thursday's release version
+    const version = await findReleaseForDate(releaseDate);
     if (!version) {
-      console.log("[hubspot-tickets] No qualifying release found for today. Skipping.");
+      console.log("[hubspot-tickets] No qualifying release found. Skipping.");
       return new Response("No release found", { status: 200 });
     }
     console.log(`[hubspot-tickets] Found release: ${version.name}`);
 
-    // Step 2: Get qualifying tickets (Story, Task, Hotfix, Off Cycle)
+    // Step 2: Dedup guard — skip if already sent for this release
+    const store = getStore("hubspot-dedup");
+    const lastSent = await store.get("last-sent-release").catch(() => null);
+    if (lastSent === version.name) {
+      console.log(`[hubspot-tickets] Already sent for ${version.name}. Skipping.`);
+      return new Response("Already sent", { status: 200 });
+    }
+
+    // Step 3: Get qualifying tickets (Story, Task, Hotfix, Off Cycle)
     const issues = await getIssuesForVersion(version.name);
     console.log(`[hubspot-tickets] Found ${issues.length} qualifying tickets`);
 
-    // Step 3: Extract HubSpot links with ticket titles from descriptions
+    // Step 4: Extract HubSpot links with ticket titles from descriptions
     const hubspotEntries = extractHubspotLinks(issues);
     console.log(`[hubspot-tickets] Found ${hubspotEntries.length} HubSpot links`);
 
-    // Step 4: Send to Slack
+    // Step 5: Send to Slack
     await sendToSlack(hubspotEntries);
     console.log("[hubspot-tickets] Message sent to Slack");
+
+    // Step 6: Record sent release to prevent duplicates
+    await store.set("last-sent-release", version.name);
 
     return new Response("OK", { status: 200 });
   } catch (err) {
@@ -39,9 +52,12 @@ export default async () => {
   }
 };
 
-function getTodayMYT() {
+// Returns the date of the most recent Thursday in MYT (YYYY-MM-DD)
+// Releases are scheduled on Thursdays; this function runs Friday 10AM MYT
+function getThursdayMYT() {
   const now = new Date();
   const myt = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kuala_Lumpur" }));
+  myt.setDate(myt.getDate() - 1); // Yesterday = Thursday
   const y = myt.getFullYear();
   const m = String(myt.getMonth() + 1).padStart(2, "0");
   const d = String(myt.getDate()).padStart(2, "0");
@@ -93,23 +109,19 @@ async function jiraPost(path, body) {
   return res.json();
 }
 
-async function findTodayRelease(today) {
-  const versions = await jiraFetch("/project/B2/version?status=unreleased&orderBy=-sequence&maxResults=50");
-  const versionList = versions.values || versions;
-
-  for (const v of versionList) {
-    if (v.releaseDate !== today) continue;
+async function findReleaseForDate(date) {
+  const unreleased = await jiraFetch("/project/B2/version?status=unreleased&orderBy=-sequence&maxResults=50");
+  for (const v of (unreleased.values || unreleased)) {
+    if (v.releaseDate !== date) continue;
     if (/mobile|rn mobile|special/i.test(v.name)) continue;
     if (!/^\d+\.\d+\.0$/.test(v.name)) continue;
     return v;
   }
 
-  // Also check released versions in case it was already released today
+  // Also check already-released versions
   const released = await jiraFetch("/project/B2/version?status=released&orderBy=-sequence&maxResults=20");
-  const releasedList = released.values || released;
-
-  for (const v of releasedList) {
-    if (v.releaseDate !== today) continue;
+  for (const v of (released.values || released)) {
+    if (v.releaseDate !== date) continue;
     if (/mobile|rn mobile|special/i.test(v.name)) continue;
     if (!/^\d+\.\d+\.0$/.test(v.name)) continue;
     return v;
@@ -137,7 +149,6 @@ function extractHubspotLinks(issues) {
     const title = issue.fields?.summary || "";
     if (!desc) continue;
 
-    // Description can be ADF (object) or rendered text
     const text = typeof desc === "string" ? desc : JSON.stringify(desc);
     const matches = text.match(hubspotRegex);
     if (matches) {
