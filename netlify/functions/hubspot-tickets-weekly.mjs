@@ -127,26 +127,35 @@ async function getIssuesForVersion(versionName) {
   return data.issues || [];
 }
 
+// Recursively extract plain text from Atlassian Document Format (ADF) JSON
+function extractTextFromAdf(node) {
+  if (!node) return "";
+  if (typeof node === "string") return node;
+  if (node.type === "text") return node.text ?? "";
+  if (node.type === "inlineCard" || node.type === "blockCard") {
+    return node.attrs?.url ?? "";
+  }
+  const children = node.content ?? [];
+  return children.map(extractTextFromAdf).join(" ");
+}
+
 function extractHubspotLinks(issues) {
   const seen = new Set();
   const entries = [];
-  const hubspotRegex = /https?:\/\/app\.hubspot\.com\/contacts\/[^\s"<>\]|)]*/gi;
+  const hubspotRegex = /https:\/\/app\.hubspot\.com[^\s\])"<>]*/g;
 
   for (const issue of issues) {
     const desc = issue.fields?.description;
     const title = issue.fields?.summary || "";
     if (!desc) continue;
 
-    // Description can be ADF (object) or rendered text
-    const text = typeof desc === "string" ? desc : JSON.stringify(desc);
-    const matches = text.match(hubspotRegex);
-    if (matches) {
-      for (const url of matches) {
-        const clean = url.replace(/[,;.]+$/, "");
-        if (!seen.has(clean)) {
-          seen.add(clean);
-          entries.push({ title, url: clean });
-        }
+    // Properly extract text from ADF format, or use raw string
+    const text = typeof desc === "string" ? desc : extractTextFromAdf(desc);
+    const matches = [...text.matchAll(hubspotRegex)].map(m => m[0].replace(/[,;.]+$/, "").trim());
+    for (const url of matches) {
+      if (!seen.has(url)) {
+        seen.add(url);
+        entries.push({ title, url });
       }
     }
   }
