@@ -24,13 +24,13 @@ export default async () => {
     }
     log("INFO", "ENV", "All environment variables present");
 
-    const today = getTodayMYT();
-    log("INFO", "DATE", "Resolved today in MYT", { today, utcNow: new Date().toISOString() });
+    const { from: weekStart, to: weekEnd } = getWeekRangeMYT();
+    log("INFO", "DATE", "Resolved week range in MYT", { weekStart, weekEnd, utcNow: new Date().toISOString() });
 
-    // Step 1: Find the release version with today's date
-    const version = await findTodayRelease(today);
+    // Step 1: Find the release version within this week (Mon–Thu)
+    const version = await findWeekRelease(weekStart, weekEnd);
     if (!version) {
-      log("WARN", "JIRA", "No qualifying release found for today — skipping", { today });
+      log("WARN", "JIRA", "No qualifying release found this week — skipping", { weekStart, weekEnd });
       return new Response("No release found", { status: 200 });
     }
     log("INFO", "JIRA", "Found qualifying release", { name: version.name, releaseDate: version.releaseDate });
@@ -63,13 +63,22 @@ export default async () => {
   }
 };
 
-function getTodayMYT() {
+function getWeekRangeMYT() {
   const now = new Date();
   const myt = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kuala_Lumpur" }));
-  const y = myt.getFullYear();
-  const m = String(myt.getMonth() + 1).padStart(2, "0");
-  const d = String(myt.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
+  const day = myt.getDay(); // 0=Sun, 1=Mon, ..., 4=Thu
+  // Monday of this week
+  const monday = new Date(myt);
+  monday.setDate(myt.getDate() - (day === 0 ? 6 : day - 1));
+  // Today (Thursday when scheduled)
+  const today = new Date(myt);
+  const fmt = (d) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${dd}`;
+  };
+  return { from: fmt(monday), to: fmt(today) };
 }
 
 async function jiraFetch(path) {
@@ -114,8 +123,8 @@ async function jiraPost(path, body) {
   return res.json();
 }
 
-async function findTodayRelease(today) {
-  log("INFO", "JIRA", "Searching for release version", { releaseDate: today, project: "B2" });
+async function findWeekRelease(from, to) {
+  log("INFO", "JIRA", "Searching for release version in week range", { from, to, project: "B2" });
 
   const versions = await jiraFetch("/project/B2/version?status=unreleased&orderBy=-sequence&maxResults=50");
   const versionList = versions.values || versions;
@@ -125,7 +134,7 @@ async function findTodayRelease(today) {
   });
 
   for (const v of versionList) {
-    if (v.releaseDate !== today) continue;
+    if (!v.releaseDate || v.releaseDate < from || v.releaseDate > to) continue;
     if (/mobile|rn mobile|special/i.test(v.name)) {
       log("DEBUG", "JIRA", "Version skipped (excluded pattern)", { name: v.name });
       continue;
@@ -134,7 +143,7 @@ async function findTodayRelease(today) {
       log("DEBUG", "JIRA", "Version skipped (name pattern mismatch)", { name: v.name, expected: "X.X.0" });
       continue;
     }
-    log("INFO", "JIRA", "Qualifying version found in unreleased", { name: v.name });
+    log("INFO", "JIRA", "Qualifying version found in unreleased", { name: v.name, releaseDate: v.releaseDate });
     return v;
   }
 
@@ -147,14 +156,14 @@ async function findTodayRelease(today) {
   });
 
   for (const v of releasedList) {
-    if (v.releaseDate !== today) continue;
+    if (!v.releaseDate || v.releaseDate < from || v.releaseDate > to) continue;
     if (/mobile|rn mobile|special/i.test(v.name)) continue;
     if (!/^\d+\.\d+\.0$/.test(v.name)) continue;
-    log("INFO", "JIRA", "Qualifying version found in released", { name: v.name });
+    log("INFO", "JIRA", "Qualifying version found in released", { name: v.name, releaseDate: v.releaseDate });
     return v;
   }
 
-  log("WARN", "JIRA", "No qualifying version found for date", { releaseDate: today });
+  log("WARN", "JIRA", "No qualifying version found in week range", { from, to });
   return null;
 }
 
